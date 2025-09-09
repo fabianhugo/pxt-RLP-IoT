@@ -37,8 +37,26 @@ namespace WiFi {
         serial.redirect(txPin, rxPin, baudRate)
     }
 
+    /**
+     * Clear serial buffer to prevent data contamination
+     */
+    function clearSerialBuffer() {
+        // Read and discard any pending data
+        let attempts = 0
+        while (attempts < 10) {
+            let data = serial.readString()
+            if (data.length == 0) break
+            attempts++
+            basic.pause(10)
+        }
+    }
+
     export function sendATCmd(cmd: string) {
-        led.toggle(4, 0)
+        led.plot(4, 0)  // Turn on LED to indicate command start
+        
+        // Clear any pending data before sending command
+        clearSerialBuffer()
+        
         if (WiFiDebugMode) {
             serial.redirectToUSB()
             basic.pause(50)
@@ -47,8 +65,8 @@ namespace WiFi {
             serial.redirect(txPin, rxPin, baudRate);
         }
         serial.writeString(cmd + "\r\n")
-        led.toggle(4, 0)
-        basic.pause(50)
+        basic.pause(100)
+        led.unplot(4, 0)  // Turn off LED when command is sent
     }
     export function waitAtResponse(target1: string, target2: string, target3: string, timeout: number) {
         let start = input.runningTime()
@@ -192,13 +210,13 @@ namespace WiFi {
         let result = 0
         let mqttstate = checkMQTTConnection()
         basic.pause(100)
-        if (!isMqttConnected){
+        if (!isMqttConnected) {
             if (mqttstate == 1 || mqttstate == 2) {
                 sendATCmd(`AT+MQTTCLEAN=0`)
                 result = waitAtResponse("OK", "ERROR", "FAIL", 2000)
                 basic.pause(500)
             }
-            
+
             // Configure MQTT user settings
             sendATCmd(`AT+MQTTUSERCFG=0,1,"${clientId}","${username}","${password}",0,0,""`)
             result = waitAtResponse("OK", "ERROR", "FAIL", 2000)
@@ -219,8 +237,8 @@ namespace WiFi {
                 return
             }
         }
-    else {
-            basic.showString("MQTT already setup")
+        else {
+            basic.showString("MQTT already setup", 70)
         }
     }
 
@@ -235,9 +253,15 @@ namespace WiFi {
             basic.showString("Not Connected", 70)
             return
         }
+        
+        // Clear buffer before publishing to avoid contamination
+        clearSerialBuffer()
+        basic.pause(100)  // Extra pause before publish
+        
         sendATCmd(`AT+MQTTPUB=0,"${topic}","${message}",1,0`)
-        let result = waitAtResponse("OK", "ERROR", "FAIL", 2000)
-
+        let result = waitAtResponse("OK", "ERROR", "FAIL", 3000)  // Longer timeout
+        
+        basic.pause(200)  // Extra pause after publish
     }
 
     /**
@@ -271,7 +295,7 @@ namespace WiFi {
         if (result == 2) {
             basic.showString("Already Sub", 70)
         }
-        if (result == 3){ 
+        if (result == 3) {
             basic.showString("Sub Failed", 70)
         }
     }
@@ -378,7 +402,7 @@ namespace WiFi {
     /**
      * Get the value for a specific MQTT topic
      */
-    //% block="Get MQTT Value|Topic %topic"
+    //% block="Get MQTT Value of|Topic %topic"
     //% weight=40
     //% group="UartWiFi"
     export function getMQTTTopicValue(topic: string): string {
@@ -407,6 +431,23 @@ namespace WiFi {
     //% group="UartWiFi"
     export function clearAllTopicValues() {
         topicValues = {}
+    }
+
+    /**
+     * Clear serial communication buffer
+     */
+    //% block="Clear Serial Buffer" advanced=true
+    //% weight=8
+    //% group="UartWiFi"
+    export function clearBuffer() {
+        clearSerialBuffer()
+        if (WiFiDebugMode) {
+            serial.redirectToUSB()
+            basic.pause(50)
+            serial.writeString("Serial buffer cleared\r\n")
+            basic.pause(50)
+            serial.redirect(txPin, rxPin, baudRate);
+        }
     }
 
     /**
@@ -462,7 +503,7 @@ namespace WiFi {
 
         isMqttConnected = false
         return 0 // Query failed or no response
-    }    
+    }
     /**
      * Quick status check - returns true if WiFi connected and MQTT is connected
      */
