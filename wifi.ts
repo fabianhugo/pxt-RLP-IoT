@@ -17,6 +17,15 @@ namespace WiFi {
     let lastReceivedMessage = ""
     let topicValues: { [topic: string]: string } = {}
 
+    // TCP/IP connection variables
+    let isTcpConnected = false
+    let tcpLinkId = 1  // Use link ID 1 for TCP (0 reserved for MQTT)
+    let tcpServerRunning = false
+    let lastTcpData = ""
+    let tcpDataReceived = false
+    let lastHttpStatus = 0
+    let lastHttpBody = ""
+
     serial.setRxBufferSize(192)
     serial.setTxBufferSize(64)
     serial.redirect(txPin, rxPin, baudRate);
@@ -26,7 +35,7 @@ namespace WiFi {
      */
     //% block="Configure Serial Pins|TX %tx|RX %rx|Baud Rate %baud"
     //% weight=110
-    //% group="UartWiFi"
+    //% group="Connection"
     //% tx.defl=SerialPin.C17
     //% rx.defl=SerialPin.C16
     //% baud.defl=BaudRate.BaudRate115200
@@ -49,6 +58,96 @@ namespace WiFi {
             attempts++
             basic.pause(10)
         }
+    }
+
+    /**
+     * Read data with chunking support for large responses
+     */
+    function readChunkedData(timeout: number): string {
+        let fullData = ""
+        let start = input.runningTime()
+        let noDataCount = 0
+        
+        while (input.runningTime() - start < timeout) {
+            let chunk = serial.readString()
+            if (chunk.length > 0) {
+                fullData += chunk
+                noDataCount = 0
+            } else {
+                noDataCount++
+                if (noDataCount > 5) break  // No data for 500ms
+            }
+            basic.pause(100)
+        }
+        
+        return fullData
+    }
+
+    /**
+     * Parse +IPD data from ESP32 format: +IPD,<link_id>,<length>:<data>
+     */
+    function parseIPDData(response: string): string {
+        let dataContent = ""
+        let lines = response.split("\n")
+        
+        for (let i = 0; i < lines.length; i++) {
+            let line = lines[i]
+            if (line.includes("+IPD")) {
+                // Find the colon that separates header from data
+                let colonIndex = line.indexOf(":")
+                if (colonIndex > 0 && colonIndex < line.length - 1) {
+                    dataContent += line.substr(colonIndex + 1)
+                }
+            } else if (dataContent.length > 0) {
+                // Continue collecting data after +IPD line
+                dataContent += line + "\n"
+            }
+        }
+        
+        return dataContent
+    }
+
+    /**
+     * Extract HTTP status code from response
+     */
+    function parseHttpStatus(response: string): number {
+        // Look for "HTTP/1.1 200 OK" or similar
+        let lines = response.split("\n")
+        for (let i = 0; i < lines.length; i++) {
+            let line = lines[i]
+            if (line.includes("HTTP/1.1") || line.includes("HTTP/1.0")) {
+                // Extract status code (e.g., "HTTP/1.1 200 OK")
+                let parts = line.split(" ")
+                if (parts.length >= 2) {
+                    let status = parseInt(parts[1])
+                    if (status > 0) return status
+                }
+            }
+        }
+        return 0
+    }
+
+    /**
+     * Extract HTTP body from response (content after headers)
+     */
+    function parseHttpBody(response: string): string {
+        // HTTP body starts after double newline (\r\n\r\n or \n\n)
+        let separators = ["\r\n\r\n", "\n\n"]
+        
+        for (let i = 0; i < separators.length; i++) {
+            let sep = separators[i]
+            let sepIndex = response.indexOf(sep)
+            if (sepIndex > 0) {
+                let body = response.substr(sepIndex + sep.length)
+                // Trim any trailing whitespace
+                while (body.length > 0 && (body.charAt(body.length - 1) == "\r" || body.charAt(body.length - 1) == "\n" || body.charAt(body.length - 1) == " ")) {
+                    body = body.substr(0, body.length - 1)
+                }
+                return body
+            }
+        }
+        
+        return ""
     }
 
     export function sendATCmd(cmd: string) {
@@ -110,9 +209,9 @@ namespace WiFi {
     /**
      * Setup Uart WiFi to connect to  Wi-Fi
      */
-    //% block="Setup Wifi|SSID = %ssid|Password = %passwd"
+    //% block="Connect to WiFi|SSID %ssid|Password %passwd"
     //% weight=100
-    //% group="UartWiFi"
+    //% group="Connection"
     export function setupWifi(ssid: string, passwd: string) {
         isWifiConnected = false
         let result = 0
@@ -136,9 +235,10 @@ namespace WiFi {
     /**
      * Check actual WiFi connection status using AT command
      */
-    //% block="Is WiFi connected"
-    //% weight=90
-    //% group="UartWiFi"
+    //% block="WiFi Connected"
+    //% weight=95
+    //% group="Monitoring"
+    //% blockSetVariable="wifiStatus"
     export function checkWiFiConnection(): boolean {
         sendATCmd('AT+CWJAP?')
         let result = waitAtResponse("+CWJAP:", "No AP", "ERROR", 2000)
@@ -162,7 +262,7 @@ namespace WiFi {
      */
     //% block="Get WiFi Info" advanced=true
     //% weight=30
-    //% group="UartWiFi"
+    //% group="Monitoring"
     export function getWiFiInfo(): string {
         sendATCmd('AT+CWJAP?')
         let result = waitAtResponse("+CWJAP:", "No AP", "ERROR", 2000)
@@ -181,8 +281,8 @@ namespace WiFi {
      * Reset ESP32 module to factory defaults
      */
     //% block="Reset Module to Factory Defaults" advanced=true
-    //% weight=25
-    //% group="UartWiFi"
+    //% weight=15
+    //% group="Advanced"
     export function resetModule() {
 
         sendATCmd('AT+RESTORE')
@@ -201,9 +301,9 @@ namespace WiFi {
     /**
      * Setup MQTT connection with broker
      */
-    //% block="Setup MQTT|Broker %broker|Port %port|Client ID %clientId|Username %username|Password %password"
-    //% weight=80
-    //% group="UartWiFi"
+    //% block="Connect to MQTT Broker|Broker %broker|Port %port|Client ID %clientId|Username %username|Password %password"
+    //% weight=90
+    //% group="Connection"
     //% port.defl=1883
     //% clientId.defl="Device001"
     export function setupMQTT(broker: string, port: number, clientId: string, username: string, password: string) {
@@ -211,7 +311,7 @@ namespace WiFi {
         let mqttstate = checkMQTTConnection()
         basic.pause(100)
         if (!isMqttConnected) {
-            if (mqttstate == 1 || mqttstate == 2) {
+            if (mqttstate) {
                 sendATCmd(`AT+MQTTCLEAN=0`)
                 result = waitAtResponse("OK", "ERROR", "FAIL", 2000)
                 basic.pause(500)
@@ -245,9 +345,9 @@ namespace WiFi {
     /**
      * Publish message to MQTT topic
      */
-    //% block="Publish MQTT|Topic %topic|Message %message"
-    //% weight=75
-    //% group="UartWiFi"
+    //% block="Publish to MQTT|Topic %topic|Message %message"
+    //% weight=80
+    //% group="MQTT Operations"
     export function publishMQTT(topic: string, message: string) {
         if (!isMqttConnected) {
             basic.showString("Not Connected", 70)
@@ -267,9 +367,9 @@ namespace WiFi {
     /**
      * Disconnect from MQTT broker
      */
-    //% block="Disconnect MQTT" advanced=true
+    //% block="Disconnect from MQTT" advanced=true
     //% weight=20
-    //% group="UartWiFi"
+    //% group="Advanced"
     export function disconnectMQTT() {
         sendATCmd('AT+MQTTCLEAN=0')
         waitAtResponse("OK", "ERROR", "FAIL", 2000)
@@ -281,8 +381,8 @@ namespace WiFi {
      * Subscribe to MQTT topic/feed
      */
     //% block="Subscribe to MQTT|Topic %topic|QoS %qos"
-    //% weight=60
-    //% group="UartWiFi"
+    //% weight=75
+    //% group="MQTT Operations"
     //% qos.defl=0
     export function subscribeMQTT(topic: string, qos: number) {
         if (!isMqttConnected) {
@@ -304,8 +404,8 @@ namespace WiFi {
      * Start MQTT message listener using serial events
      */
     //% block="Start MQTT Listener"
-    //% weight=50
-    //% group="UartWiFi"
+    //% weight=70
+    //% group="MQTT Operations"
     export function startMQTTListener() {
         if (!isMqttConnected) {
             basic.showString("Not Connected", 70)
@@ -313,7 +413,7 @@ namespace WiFi {
         }
 
         isListening = true
-        basic.showString("...", 70)
+        //basic.showString("...", 70)
 
         // Set up serial event listener for incoming data
         serial.onDataReceived(serial.delimiters(Delimiters.NewLine), function () {
@@ -380,8 +480,8 @@ namespace WiFi {
      * Stop MQTT message listener
      */
     //% block="Stop MQTT Listener" advanced=true
-    //% weight=45
-    //% group="UartWiFi"
+    //% weight=25
+    //% group="Advanced"
     export function stopMQTTListener() {
         isListening = false
         // Note: We can't easily remove the serial event handler in MakeCode
@@ -394,7 +494,8 @@ namespace WiFi {
      */
     //% block="Last MQTT Message" advanced=true
     //% weight=35
-    //% group="UartWiFi"
+    //% group="Advanced"
+    //% blockSetVariable="message"
     export function getLastMQTTMessage(): string {
         return lastReceivedMessage
     }
@@ -402,9 +503,10 @@ namespace WiFi {
     /**
      * Get the value for a specific MQTT topic
      */
-    //% block="Get MQTT Value of|Topic %topic"
-    //% weight=40
-    //% group="UartWiFi"
+    //% block="Get MQTT Value|Topic %topic"
+    //% weight=65
+    //% group="MQTT Operations"
+    //% blockSetVariable="value"
     export function getMQTTTopicValue(topic: string): string {
         if (topicValues[topic]) {
             return topicValues[topic]
@@ -416,8 +518,8 @@ namespace WiFi {
      * Check if a topic has received a value
      */
     //% block="Topic %topic Has Value" advanced=true
-    //% weight=15
-    //% group="UartWiFi"
+    //% weight=40
+    //% group="Monitoring"
     export function topicHasValue(topic: string): boolean {
         return topicValues[topic] != undefined && topicValues[topic].length > 0
     }
@@ -428,7 +530,7 @@ namespace WiFi {
      */
     //% block="Clear All Topic Values" advanced=true
     //% weight=10
-    //% group="UartWiFi"
+    //% group="Advanced"
     export function clearAllTopicValues() {
         topicValues = {}
     }
@@ -438,7 +540,7 @@ namespace WiFi {
      */
     //% block="Clear Serial Buffer" advanced=true
     //% weight=8
-    //% group="UartWiFi"
+    //% group="Advanced"
     export function clearBuffer() {
         clearSerialBuffer()
         if (WiFiDebugMode) {
@@ -454,8 +556,9 @@ namespace WiFi {
      * Check if listener is running
      */
     //% block="MQTT Listener Running" advanced=true
-    //% weight=5
-    //% group="UartWiFi"
+    //% weight=50
+    //% group="Monitoring"
+    //% blockSetVariable="listenerStatus"
     export function isMQTTListenerRunning(): boolean {
         return isListening
     }
@@ -464,11 +567,11 @@ namespace WiFi {
     /**
      * Check if MQTT is connected by querying connection status
      */
-    //% block="Is MQTT Connected?" 
-    //% weight=70
-    //% advanced=true
-    //% group="UartWiFi"
-    export function checkMQTTConnection(): number {
+    //% block="MQTT Connected" 
+    //% weight=85
+    //% group="Monitoring"
+    //% blockSetVariable="mqttStatus"
+    export function checkMQTTConnection(): boolean {
         sendATCmd('AT+MQTTCONN?')
         let result = waitAtResponse("+MQTTCONN:", "ERROR", "FAIL", 2000)
 
@@ -481,7 +584,7 @@ namespace WiFi {
                     // Check if response matches factory default pattern: +MQTTCONN:0,0,0,"","","",0
                     if (line.includes('+MQTTCONN:0,0,0,"","","",0')) {
                         isMqttConnected = false
-                        return 0  // Factory default = not connected
+                        return false  // Factory default = not connected
                     }
 
                     // Parse the response to check the state value (second parameter)
@@ -491,9 +594,7 @@ namespace WiFi {
                         let state = parseInt(parts[1])
                         if (state >= 4) {
                             isMqttConnected = true  // Update global status if fully connected
-                            return state
-                        } else if (state >= 1) {
-                            return 1  // Configured but not fully connected
+                            return true
                         }
                     }
                     break
@@ -502,14 +603,15 @@ namespace WiFi {
         }
 
         isMqttConnected = false
-        return 0 // Query failed or no response
+        return false // Query failed or no response
     }
     /**
      * Quick status check - returns true if WiFi connected and MQTT is connected
      */
-    //% block="WiFi and MQTT Ready"
-    //% weight=78
-    //% group="UartWiFi"
+    //% block="WiFi & MQTT Ready"
+    //% weight=90
+    //% group="Monitoring"
+    //% blockSetVariable="isReady"
     export function isWiFiAndMQTTReady(): boolean {
         let wifiStatus = checkWiFiConnection()
         let mqttStatus = checkMQTTConnection()
@@ -526,5 +628,296 @@ namespace WiFi {
         return isWifiConnected && isMqttConnected
     }
 
+    // ==================== TCP/IP Functions ====================
+
+    /**
+     * Enable multiple TCP connections (required for TCP operations)
+     */
+    //% block="Enable Multiple Connections" advanced=true
+    //% weight=95
+    //% group="TCP/IP"
+    export function enableMultipleConnections() {
+        sendATCmd('AT+CIPMUX=1')
+        let result = waitAtResponse("OK", "ERROR", "FAIL", 1000)
+        if (result == 1) {
+            basic.showString("MUX OK", 70)
+        }
+    }
+
+    /**
+     * Connect to TCP server
+     */
+    //% block="Connect TCP|Host %host|Port %port"
+    //% weight=90
+    //% group="TCP/IP"
+    //% port.defl=80
+    export function connectTCP(host: string, port: number) {
+        // Validate WiFi is connected first
+        if (!isWifiConnected) {
+            basic.showString("No WiFi", 70)
+            return
+        }
+        
+        isTcpConnected = false
+        clearSerialBuffer()
+        
+        // Enable multiple connections first
+        sendATCmd('AT+CIPMUX=1')
+        waitAtResponse("OK", "ERROR", "FAIL", 1000)
+        
+        // Start TCP connection
+        sendATCmd(`AT+CIPSTART=${tcpLinkId},"TCP","${host}",${port}`)
+        let result = waitAtResponse("CONNECT", "ERROR", "ALREADY CONNECTED", 5000)
+        
+        if (result == 1 || result == 3) {
+            isTcpConnected = true
+            basic.showString("TCP OK", 70)
+        } else {
+            basic.showString("TCP Fail", 70)
+        }
+    }
+
+    /**
+     * Send data over TCP connection
+     */
+    //% block="Send TCP Data|Data %data"
+    //% weight=85
+    //% group="TCP/IP"
+    export function sendTCP(data: string) {
+        if (!isTcpConnected) {
+            basic.showString("No TCP", 70)
+            return
+        }
+        
+        clearSerialBuffer()
+        
+        // Prepare to send data
+        sendATCmd(`AT+CIPSEND=${tcpLinkId},${data.length}`)
+        let result = waitAtResponse(">", "ERROR", "FAIL", 2000)
+        
+        if (result == 1) {
+            // Send actual data (no AT prefix needed)
+            serial.writeString(data)
+            basic.pause(50)
+            result = waitAtResponse("SEND OK", "ERROR", "FAIL", 3000)
+        }
+    }
+
+    /**
+     * Close TCP connection
+     */
+    //% block="Close TCP Connection" advanced=true
+    //% weight=75
+    //% group="TCP/IP"
+    export function closeTCP() {
+        sendATCmd(`AT+CIPCLOSE=${tcpLinkId}`)
+        waitAtResponse("OK", "ERROR", "FAIL", 2000)
+        isTcpConnected = false
+        basic.showString("TCP Closed", 70)
+    }
+
+    /**
+     * Send HTTP GET request
+     */
+    //% block="HTTP GET|Host %host|Port %port|Path %path"
+    //% weight=80
+    //% group="TCP/IP"
+    //% port.defl=80
+    //% path.defl="/"
+    export function httpGET(host: string, port: number, path: string) {
+        lastHttpStatus = 0
+        lastHttpBody = ""
+        tcpDataReceived = false
+        
+        connectTCP(host, port)
+        basic.pause(500)
+        
+        if (isTcpConnected) {
+            let request = `GET ${path} HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`
+            sendTCP(request)
+            basic.pause(1000)
+            
+            // Read response with chunking support
+            lastTcpData = readChunkedData(5000)
+            
+            if (lastTcpData.length > 0) {
+                tcpDataReceived = true
+                // Parse IPD format and extract HTTP content
+                let httpData = parseIPDData(lastTcpData)
+                if (httpData.length > 0) {
+                    lastHttpStatus = parseHttpStatus(httpData)
+                    lastHttpBody = parseHttpBody(httpData)
+                }
+            }
+            
+            closeTCP()
+        }
+    }
+
+    /**
+     * Send HTTP POST request with data
+     */
+    //% block="HTTP POST|Host %host|Port %port|Path %path|Data %data"
+    //% weight=75
+    //% group="TCP/IP"
+    //% port.defl=80
+    //% path.defl="/api/data"
+    export function httpPOST(host: string, port: number, path: string, data: string) {
+        lastHttpStatus = 0
+        lastHttpBody = ""
+        tcpDataReceived = false
+        
+        connectTCP(host, port)
+        basic.pause(500)
+        
+        if (isTcpConnected) {
+            let request = `POST ${path} HTTP/1.1\r\nHost: ${host}\r\nContent-Type: application/json\r\nContent-Length: ${data.length}\r\nConnection: close\r\n\r\n${data}`
+            sendTCP(request)
+            basic.pause(1000)
+            
+            // Read response with chunking support
+            lastTcpData = readChunkedData(5000)
+            
+            if (lastTcpData.length > 0) {
+                tcpDataReceived = true
+                // Parse IPD format and extract HTTP content
+                let httpData = parseIPDData(lastTcpData)
+                if (httpData.length > 0) {
+                    lastHttpStatus = parseHttpStatus(httpData)
+                    lastHttpBody = parseHttpBody(httpData)
+                }
+            }
+            
+            closeTCP()
+        }
+    }
+
+    /**
+     * Get last received TCP data (raw)
+     */
+    //% block="Last TCP Data"
+    //% weight=70
+    //% group="TCP/IP"
+    //% blockSetVariable="tcpData"
+    export function getLastTCPData(): string {
+        return lastTcpData
+    }
+
+    /**
+     * Get last HTTP response status code
+     */
+    //% block="Last HTTP Status"
+    //% weight=69
+    //% group="TCP/IP"
+    //% blockSetVariable="httpStatus"
+    export function getLastHttpStatus(): number {
+        return lastHttpStatus
+    }
+
+    /**
+     * Get last HTTP response body
+     */
+    //% block="Last HTTP Body"
+    //% weight=68
+    //% group="TCP/IP"
+    //% blockSetVariable="httpBody"
+    export function getLastHttpBody(): string {
+        return lastHttpBody
+    }
+
+    /**
+     * Check if last HTTP request was successful (status 200-299)
+     */
+    //% block="HTTP Success"
+    //% weight=67
+    //% group="TCP/IP"
+    export function isHttpSuccess(): boolean {
+        return lastHttpStatus >= 200 && lastHttpStatus < 300
+    }
+
+    /**
+     * Check if TCP data was received
+     */
+    //% block="TCP Data Received" advanced=true
+    //% weight=65
+    //% group="TCP/IP"
+    export function isTCPDataReceived(): boolean {
+        return tcpDataReceived
+    }
+
+    /**
+     * Clear TCP data buffer
+     */
+    //% block="Clear TCP Data" advanced=true
+    //% weight=60
+    //% group="TCP/IP"
+    export function clearTCPData() {
+        lastTcpData = ""
+        tcpDataReceived = false
+    }
+
+    /**
+     * Start TCP server on specified port
+     */
+    //% block="Start TCP Server|Port %port" advanced=true
+    //% weight=55
+    //% group="TCP/IP"
+    //% port.defl=8080
+    export function startTCPServer(port: number) {
+        // Enable multiple connections
+        sendATCmd('AT+CIPMUX=1')
+        waitAtResponse("OK", "ERROR", "FAIL", 1000)
+        
+        // Start server
+        sendATCmd(`AT+CIPSERVER=1,${port}`)
+        let result = waitAtResponse("OK", "ERROR", "FAIL", 2000)
+        
+        if (result == 1) {
+            tcpServerRunning = true
+            basic.showString("Server OK", 70)
+        } else {
+            basic.showString("Server Fail", 70)
+        }
+    }
+
+    /**
+     * Stop TCP server
+     */
+    //% block="Stop TCP Server" advanced=true
+    //% weight=50
+    //% group="TCP/IP"
+    export function stopTCPServer() {
+        sendATCmd('AT+CIPSERVER=0')
+        waitAtResponse("OK", "ERROR", "FAIL", 2000)
+        tcpServerRunning = false
+        basic.showString("Server Stop", 70)
+    }
+
+    /**
+     * Check if TCP is connected
+     */
+    //% block="TCP Connected" advanced=true
+    //% weight=45
+    //% group="TCP/IP"
+    //% blockSetVariable="tcpStatus"
+    export function isTCPConnected(): boolean {
+        return isTcpConnected
+    }
+
+    /**
+     * Send simple JSON data via HTTP POST
+     */
+    //% block="Send Sensor Data|Host %host|Port %port|Path %path|Key %key|Value %value"
+    //% weight=70
+    //% group="TCP/IP"
+    //% port.defl=80
+    //% path.defl="/api/sensor"
+    //% key.defl="temperature"
+    export function sendSensorData(host: string, port: number, path: string, key: string, value: string) {
+        let jsonData = `{"${key}":"${value}"}`
+        httpPOST(host, port, path, jsonData)
+    }
+
 }
+
 

@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IoT Platform Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        h1 {
+            color: white;
+            font-size: 2.5em;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.2);
+            margin-bottom: 10px;
+        }
+
+        .status-badge {
+            display: inline-block;
+            background: rgba(255,255,255,0.2);
+            padding: 8px 16px;
+            border-radius: 20px;
+            color: white;
+            font-size: 0.9em;
+            backdrop-filter: blur(10px);
+        }
+
+        .status-badge.online {
+            background: rgba(76, 175, 80, 0.8);
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .card {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            transition: transform 0.3s, box-shadow 0.3s;
+        }
+
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 15px 40px rgba(0,0,0,0.3);
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #f0f0f0;
+        }
+
+        .card-title {
+            font-size: 1.2em;
+            font-weight: 600;
+            color: #333;
+        }
+
+        .card-icon {
+            font-size: 1.5em;
+        }
+
+        .device-card {
+            border-left: 4px solid #667eea;
+        }
+
+        .device-id {
+            font-size: 0.9em;
+            color: #666;
+            margin-bottom: 10px;
+        }
+
+        .sensor-reading {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            margin-bottom: 10px;
+        }
+
+        .sensor-label {
+            font-weight: 500;
+            color: #555;
+            text-transform: capitalize;
+        }
+
+        .sensor-value {
+            font-size: 1.3em;
+            font-weight: 700;
+            color: #667eea;
+        }
+
+        .timestamp {
+            font-size: 0.8em;
+            color: #999;
+            margin-top: 10px;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+
+        .stat-card {
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            text-align: center;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        }
+
+        .stat-value {
+            font-size: 2em;
+            font-weight: 700;
+            color: #667eea;
+            margin-bottom: 5px;
+        }
+
+        .stat-label {
+            font-size: 0.9em;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .no-data {
+            text-align: center;
+            padding: 40px;
+            color: #999;
+            font-style: italic;
+        }
+
+        .controls {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            margin-bottom: 30px;
+        }
+
+        .control-group {
+            margin-bottom: 15px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+            color: #333;
+        }
+
+        input, select, button {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 1em;
+            transition: border-color 0.3s;
+        }
+
+        input:focus, select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-weight: 600;
+            margin-top: 10px;
+            transition: transform 0.2s;
+        }
+
+        button:hover {
+            transform: scale(1.02);
+        }
+
+        button:active {
+            transform: scale(0.98);
+        }
+
+        .refresh-btn {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            font-size: 1.5em;
+            cursor: pointer;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+            transition: transform 0.3s;
+        }
+
+        .refresh-btn:hover {
+            transform: scale(1.1) rotate(90deg);
+        }
+
+        .ws-indicator {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 8px 16px;
+            border-radius: 20px;
+            color: white;
+            font-size: 0.85em;
+            font-weight: 600;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+            z-index: 1000;
+        }
+
+        .ws-connected {
+            background: #4caf50;
+        }
+
+        .ws-disconnected {
+            background: #f44336;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .updating {
+            animation: pulse 1s infinite;
+        }
+
+        @media (max-width: 768px) {
+            h1 { font-size: 1.8em; }
+            .grid { grid-template-columns: 1fr; }
+            .stats-grid { grid-template-columns: repeat(2, 1fr); }
+        }
+    </style>
+</head>
+<body>
+    <div class="ws-indicator ws-disconnected" id="wsIndicator">
+        ⚫ Disconnected
+    </div>
+
+    <div class="container">
+        <header>
+            <h1>🌐 IoT Platform Dashboard</h1>
+            <div class="status-badge" id="serverStatus">● Connecting...</div>
+        </header>
+
+        <div class="stats-grid" id="statsGrid">
+            <div class="stat-card">
+                <div class="stat-value" id="deviceCount">-</div>
+                <div class="stat-label">Devices</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="dataPoints">-</div>
+                <div class="stat-label">Data Points</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="wsClients">-</div>
+                <div class="stat-label">WS Clients</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="uptime">-</div>
+                <div class="stat-label">Uptime</div>
+            </div>
+        </div>
+
+        <div class="controls">
+            <h3 style="margin-bottom: 15px;">📤 Send Command to Device</h3>
+            <div class="control-group">
+                <label>Device ID</label>
+                <input type="text" id="cmdDeviceId" placeholder="Device001">
+            </div>
+            <div class="control-group">
+                <label>Command</label>
+                <input type="text" id="cmdCommand" placeholder="led_on">
+            </div>
+            <div class="control-group">
+                <label>Value (optional)</label>
+                <input type="text" id="cmdValue" placeholder="red">
+            </div>
+            <button onclick="sendCommand()">Send Command</button>
+        </div>
+
+        <h2 style="color: white; margin-bottom: 20px; text-align: center;">📊 Connected Devices</h2>
+        <div class="grid" id="devicesGrid">
+            <div class="no-data">No devices connected yet...</div>
+        </div>
+    </div>
+
+    <button class="refresh-btn" onclick="loadData()" title="Refresh">↻</button>
+
+    <script>
+        let ws = null;
+        let reconnectTimeout = null;
+
+        // Format uptime
+        function formatUptime(seconds) {
+            const hours = Math.floor(seconds / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            if (hours > 0) return `${hours}h ${minutes}m`;
+            return `${minutes}m`;
+        }
+
+        // Format timestamp
+        function formatTimestamp(timestamp) {
+            const date = new Date(timestamp);
+            return date.toLocaleString();
+        }
+
+        // Connect to WebSocket
+        function connectWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/api/ws`;
+            
+            ws = new WebSocket(wsUrl);
+            
+            ws.onopen = () => {
+                console.log('WebSocket connected');
+                document.getElementById('wsIndicator').textContent = '🟢 Live Updates';
+                document.getElementById('wsIndicator').className = 'ws-indicator ws-connected';
+                clearTimeout(reconnectTimeout);
+            };
+            
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                console.log('WebSocket message:', data);
+                
+                if (data.type === 'sensor_data') {
+                    // Update device card in real-time
+                    updateDeviceCard(data.device_id, data.data, data.timestamp);
+                }
+            };
+            
+            ws.onclose = () => {
+                console.log('WebSocket disconnected');
+                document.getElementById('wsIndicator').textContent = '⚫ Disconnected';
+                document.getElementById('wsIndicator').className = 'ws-indicator ws-disconnected';
+                
+                // Reconnect after 3 seconds
+                reconnectTimeout = setTimeout(connectWebSocket, 3000);
+            };
+            
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+            };
+        }
+
+        // Load server status
+        async function loadStatus() {
+            try {
+                const response = await fetch('/api/status');
+                const data = await response.json();
+                
+                document.getElementById('serverStatus').textContent = '● Online';
+                document.getElementById('serverStatus').className = 'status-badge online';
+                document.getElementById('deviceCount').textContent = data.devices;
+                document.getElementById('dataPoints').textContent = data.total_data_points;
+                document.getElementById('wsClients').textContent = data.websocket_clients;
+                document.getElementById('uptime').textContent = formatUptime(data.uptime);
+            } catch (error) {
+                console.error('Error loading status:', error);
+                document.getElementById('serverStatus').textContent = '● Offline';
+                document.getElementById('serverStatus').className = 'status-badge';
+            }
+        }
+
+        // Load devices
+        async function loadDevices() {
+            try {
+                const response = await fetch('/api/devices');
+                const devices = await response.json();
+                
+                const grid = document.getElementById('devicesGrid');
+                
+                if (devices.length === 0) {
+                    grid.innerHTML = '<div class="no-data">No devices connected yet...</div>';
+                    return;
+                }
+                
+                grid.innerHTML = '';
+                
+                for (const device of devices) {
+                    // Load sensor data for each device
+                    const sensorResponse = await fetch(`/api/sensor/${device.device_id}`);
+                    let sensorData = {};
+                    
+                    if (sensorResponse.ok) {
+                        sensorData = await sensorResponse.json();
+                    }
+                    
+                    const card = createDeviceCard(device, sensorData);
+                    grid.appendChild(card);
+                }
+            } catch (error) {
+                console.error('Error loading devices:', error);
+            }
+        }
+
+        // Create device card
+        function createDeviceCard(device, sensorData) {
+            const card = document.createElement('div');
+            card.className = 'card device-card';
+            card.id = `device-${device.device_id}`;
+            
+            let sensorsHTML = '';
+            for (const [key, value] of Object.entries(sensorData)) {
+                if (key !== 'timestamp' && key !== 'status') {
+                    sensorsHTML += `
+                        <div class="sensor-reading">
+                            <span class="sensor-label">${key}</span>
+                            <span class="sensor-value">${value}</span>
+                        </div>
+                    `;
+                }
+            }
+            
+            if (!sensorsHTML) {
+                sensorsHTML = '<div class="no-data">No sensor data</div>';
+            }
+            
+            card.innerHTML = `
+                <div class="card-header">
+                    <div>
+                        <div class="card-title">${device.name}</div>
+                        <div class="device-id">ID: ${device.device_id}</div>
+                    </div>
+                    <div class="card-icon">📡</div>
+                </div>
+                ${sensorsHTML}
+                <div class="timestamp">Last seen: ${formatTimestamp(device.last_seen)}</div>
+            `;
+            
+            return card;
+        }
+
+        // Update device card in real-time
+        function updateDeviceCard(deviceId, sensorData, timestamp) {
+            const card = document.getElementById(`device-${deviceId}`);
+            if (!card) {
+                // Device not in list yet, reload
+                loadDevices();
+                return;
+            }
+            
+            // Add pulse animation
+            card.classList.add('updating');
+            setTimeout(() => card.classList.remove('updating'), 1000);
+            
+            // Update sensor readings
+            let sensorsHTML = '';
+            for (const [key, value] of Object.entries(sensorData)) {
+                sensorsHTML += `
+                    <div class="sensor-reading">
+                        <span class="sensor-label">${key}</span>
+                        <span class="sensor-value">${value}</span>
+                    </div>
+                `;
+            }
+            
+            const timestampDiv = card.querySelector('.timestamp');
+            const header = card.querySelector('.card-header');
+            card.innerHTML = '';
+            card.appendChild(header);
+            card.innerHTML += sensorsHTML;
+            card.innerHTML += `<div class="timestamp">Last seen: ${formatTimestamp(timestamp)}</div>`;
+        }
+
+        // Send command
+        async function sendCommand() {
+            const deviceId = document.getElementById('cmdDeviceId').value;
+            const command = document.getElementById('cmdCommand').value;
+            const value = document.getElementById('cmdValue').value;
+            
+            if (!deviceId || !command) {
+                alert('Please enter device ID and command');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/command', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ device_id: deviceId, command, value })
+                });
+                
+                const result = await response.json();
+                
+                if (result.status === 'ok') {
+                    alert('Command sent successfully!');
+                    document.getElementById('cmdCommand').value = '';
+                    document.getElementById('cmdValue').value = '';
+                } else {
+                    alert('Error: ' + result.message);
+                }
+            } catch (error) {
+                alert('Failed to send command: ' + error.message);
+            }
+        }
+
+        // Load all data
+        function loadData() {
+            loadStatus();
+            loadDevices();
+        }
+
+        // Initialize
+        connectWebSocket();
+        loadData();
+        
+        // Auto-refresh every 30 seconds
+        setInterval(loadStatus, 30000);
+    </script>
+</body>
+</html>
