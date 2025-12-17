@@ -29,6 +29,16 @@ namespace WiFi {
     serial.setRxBufferSize(192)
     serial.setTxBufferSize(64)
     serial.redirect(txPin, rxPin, baudRate);
+    /**
+     * Enable or disable debug output on USB serial
+     */
+    //% block="WiFi debug mode %on" advanced=true
+    //% weight=105
+    //% group="Connection"
+    export function setDebugMode(on: boolean) {
+        WiFiDebugMode = on
+    }
+
 
     /**
      * Configure serial pins for ESP32 communication
@@ -73,11 +83,33 @@ namespace WiFi {
             if (chunk.length > 0) {
                 fullData += chunk
                 noDataCount = 0
+                
+                if (WiFiDebugMode) {
+                    serial.redirectToUSB()
+                    basic.pause(10)
+                    serial.writeString("CHUNK:" + chunk.length + "B\r\n")
+                    basic.pause(10)
+                    serial.redirect(txPin, rxPin, baudRate)
+                }
             } else {
                 noDataCount++
-                if (noDataCount > 5) break  // No data for 500ms
+                if (noDataCount > 20) break  // No data for 1 second (20 x 50ms)
             }
-            basic.pause(100)
+            basic.pause(50)  // Read more frequently to avoid buffer overflow
+        }
+        
+        if (WiFiDebugMode && fullData.length > 0) {
+            serial.redirectToUSB()
+            basic.pause(10)
+            serial.writeString("TOTAL:" + fullData.length + "B\r\n")
+            // Show first 200 chars of response for debugging
+            if (fullData.length > 200) {
+                serial.writeString("DATA:" + fullData.substr(0, 200) + "...\r\n")
+            } else {
+                serial.writeString("DATA:" + fullData + "\r\n")
+            }
+            basic.pause(20)
+            serial.redirect(txPin, rxPin, baudRate)
         }
         
         return fullData
@@ -87,24 +119,17 @@ namespace WiFi {
      * Parse +IPD data from ESP32 format: +IPD,<link_id>,<length>:<data>
      */
     function parseIPDData(response: string): string {
-        let dataContent = ""
-        let lines = response.split("\n")
+        // Look for +IPD header: +IPD,1,270:HTTP/1.1...
+        let ipdPos = response.indexOf("+IPD")
+        if (ipdPos < 0) return ""
         
-        for (let i = 0; i < lines.length; i++) {
-            let line = lines[i]
-            if (line.includes("+IPD")) {
-                // Find the colon that separates header from data
-                let colonIndex = line.indexOf(":")
-                if (colonIndex > 0 && colonIndex < line.length - 1) {
-                    dataContent += line.substr(colonIndex + 1)
-                }
-            } else if (dataContent.length > 0) {
-                // Continue collecting data after +IPD line
-                dataContent += line + "\n"
-            }
-        }
+        // Find the colon that separates the +IPD header from the actual data
+        let colonPos = response.indexOf(":", ipdPos)
+        if (colonPos < 0 || colonPos >= response.length - 1) return ""
         
-        return dataContent
+        // Everything after the colon is the HTTP response
+        // Keep it exactly as-is, including all line breaks that remain
+        return response.substr(colonPos + 1)
     }
 
     /**
@@ -131,19 +156,61 @@ namespace WiFi {
      * Extract HTTP body from response (content after headers)
      */
     function parseHttpBody(response: string): string {
-        // HTTP body starts after double newline (\r\n\r\n or \n\n)
-        let separators = ["\r\n\r\n", "\n\n"]
+        // Look for Content-Length header first to know body size
+        let contentLengthPos = response.indexOf("Content-Length:")
+        let expectedBodyLen = 0
+        if (contentLengthPos > 0) {
+            // Extract the number after "Content-Length: "
+            let lenStart = contentLengthPos + 15
+            let lenEnd = lenStart
+            while (lenEnd < response.length && response.charAt(lenEnd) >= "0" && response.charAt(lenEnd) <= "9") {
+                lenEnd++
+            }
+            if (lenEnd > lenStart) {
+                expectedBodyLen = parseInt(response.substr(lenStart, lenEnd - lenStart))
+            }
+        }
+        
+        // Try finding JSON body directly first (most reliable for our use case)
+        let jsonStart = response.indexOf("{")
+        if (jsonStart >= 0) {
+            // Find matching closing brace
+            let jsonEnd = -1
+            for (let i = response.length - 1; i > jsonStart; i--) {
+                if (response.charAt(i) == "}") {
+                    jsonEnd = i
+                    break
+                }
+            }
+            if (jsonEnd > jsonStart) {
+                let body = response.substr(jsonStart, jsonEnd - jsonStart + 1)
+                // Verify it's reasonable JSON length
+                if (expectedBodyLen == 0 || body.length >= expectedBodyLen - 5) {
+                    return body
+                }
+            }
+        }
+        
+        // Fallback: try standard HTTP header separators
+        let separators = ["\r\n\r\n", "\n\n", "\r\n\n", "\n\r\n"]
         
         for (let i = 0; i < separators.length; i++) {
             let sep = separators[i]
             let sepIndex = response.indexOf(sep)
             if (sepIndex > 0) {
                 let body = response.substr(sepIndex + sep.length)
-                // Trim any trailing whitespace
-                while (body.length > 0 && (body.charAt(body.length - 1) == "\r" || body.charAt(body.length - 1) == "\n" || body.charAt(body.length - 1) == " ")) {
+                
+                // Trim trailing/leading whitespace
+                while (body.length > 0 && (body.charAt(body.length - 1) == "\r" || body.charAt(body.length - 1) == "\n" || body.charAt(body.length - 1) == " " || body.charAt(body.length - 1) == "\0")) {
                     body = body.substr(0, body.length - 1)
                 }
-                return body
+                while (body.length > 0 && (body.charAt(0) == "\r" || body.charAt(0) == "\n" || body.charAt(0) == " ")) {
+                    body = body.substr(1)
+                }
+                
+                if (body.length > 0) {
+                    return body
+                }
             }
         }
         
@@ -639,9 +706,6 @@ namespace WiFi {
     export function enableMultipleConnections() {
         sendATCmd('AT+CIPMUX=1')
         let result = waitAtResponse("OK", "ERROR", "FAIL", 1000)
-        if (result == 1) {
-            basic.showString("MUX OK", 70)
-        }
     }
 
     /**
@@ -654,7 +718,6 @@ namespace WiFi {
     export function connectTCP(host: string, port: number) {
         // Validate WiFi is connected first
         if (!isWifiConnected) {
-            basic.showString("No WiFi", 70)
             return
         }
         
@@ -671,9 +734,6 @@ namespace WiFi {
         
         if (result == 1 || result == 3) {
             isTcpConnected = true
-            basic.showString("TCP OK", 70)
-        } else {
-            basic.showString("TCP Fail", 70)
         }
     }
 
@@ -685,7 +745,6 @@ namespace WiFi {
     //% group="TCP/IP"
     export function sendTCP(data: string) {
         if (!isTcpConnected) {
-            basic.showString("No TCP", 70)
             return
         }
         
@@ -713,7 +772,6 @@ namespace WiFi {
         sendATCmd(`AT+CIPCLOSE=${tcpLinkId}`)
         waitAtResponse("OK", "ERROR", "FAIL", 2000)
         isTcpConnected = false
-        basic.showString("TCP Closed", 70)
     }
 
     /**
@@ -728,28 +786,52 @@ namespace WiFi {
         lastHttpStatus = 0
         lastHttpBody = ""
         tcpDataReceived = false
+        lastTcpData = ""
         
         connectTCP(host, port)
         basic.pause(500)
         
         if (isTcpConnected) {
+            // Clear buffer before sending
+            clearSerialBuffer()
+            
             let request = `GET ${path} HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`
-            sendTCP(request)
-            basic.pause(1000)
             
-            // Read response with chunking support
-            lastTcpData = readChunkedData(5000)
+            // Send request but don't wait for SEND OK - go straight to reading response
+            sendATCmd(`AT+CIPSEND=${tcpLinkId},${request.length}`)
+            let result = waitAtResponse(">", "ERROR", "FAIL", 2000)
             
-            if (lastTcpData.length > 0) {
-                tcpDataReceived = true
-                // Parse IPD format and extract HTTP content
-                let httpData = parseIPDData(lastTcpData)
-                if (httpData.length > 0) {
-                    lastHttpStatus = parseHttpStatus(httpData)
-                    lastHttpBody = parseHttpBody(httpData)
+            if (result == 1) {
+                // Send actual request data
+                serial.writeString(request)
+                basic.pause(100)
+                
+                // Don't wait for SEND OK - immediately start reading response
+                // The server responds right away and we need to capture it
+                lastTcpData = readChunkedData(5000)
+                
+                if (lastTcpData.length > 0) {
+                    tcpDataReceived = true
+                    
+                    // Parse directly from raw TCP data (skip IPD parsing - it's unreliable)
+                    lastHttpStatus = parseHttpStatus(lastTcpData)
+                    lastHttpBody = parseHttpBody(lastTcpData)
+                    
+                    if (WiFiDebugMode) {
+                        serial.redirectToUSB()
+                        basic.pause(10)
+                        serial.writeString("RAW_LEN:" + lastTcpData.length + "\r\n")
+                        serial.writeString("STAT:" + lastHttpStatus + " BODY_LEN:" + lastHttpBody.length + "\r\n")
+                        if (lastHttpBody.length > 0 && lastHttpBody.length < 100) {
+                            serial.writeString("BODY:" + lastHttpBody + "\r\n")
+                        }
+                        basic.pause(10)
+                        serial.redirect(txPin, rxPin, baudRate)
+                    }
                 }
             }
             
+            // Close connection
             closeTCP()
         }
     }

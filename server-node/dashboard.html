@@ -522,14 +522,13 @@
                 const result = await response.json();
                 
                 if (result.status === 'ok') {
-                    alert('Command sent successfully!');
-                    document.getElementById('cmdCommand').value = '';
-                    document.getElementById('cmdValue').value = '';
+                    alert('✅ Command sent successfully!\n\nDevice: ' + deviceId + '\nCommand: ' + command + '\nValue: ' + value);
+                    // Keep the form values for reuse
                 } else {
-                    alert('Error: ' + result.message);
+                    alert('❌ Error: ' + result.message);
                 }
             } catch (error) {
-                alert('Failed to send command: ' + error.message);
+                alert('❌ Failed to send command: ' + error.message);
             }
         }
 

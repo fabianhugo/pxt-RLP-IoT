@@ -12,6 +12,23 @@ const path = require('path');
 const fs = require('fs');
 
 const app = express();
+
+// Disable unnecessary headers to reduce response size for IoT devices
+app.disable('x-powered-by');
+app.disable('etag');
+app.set('jsonp callback', false);
+
+// Middleware to remove Date header (saves ~40 bytes per response)
+app.use((req, res, next) => {
+    res.removeHeader = res.removeHeader || function() {};
+    const oldEnd = res.end;
+    res.end = function(...args) {
+        res.removeHeader('Date');
+        oldEnd.apply(res, args);
+    };
+    next();
+});
+
 const wsInstance = expressWs(app);
 const PORT = process.env.PORT || 5000;
 const DB_PATH = process.env.DB_PATH || 'iot_data.db';
@@ -225,9 +242,13 @@ app.get('/api/sensor/:device_id', (req, res) => {
 /**
  * GET /api/command/:device_id - Get pending commands for a device
  * Returns: {"command": "led_on", "value": "red"}
+ * Minimal headers for IoT devices with limited buffers
  */
 app.get('/api/command/:device_id', (req, res) => {
     const { device_id } = req.params;
+    
+    // Remove CORS header for IoT devices (saves 33 bytes)
+    res.removeHeader('Access-Control-Allow-Origin');
 
     // Get oldest unexecuted command
     db.get(`SELECT id, command, value 
@@ -246,13 +267,12 @@ app.get('/api/command/:device_id', (req, res) => {
                     return res.status(400).json({ status: 'error', message: err.message });
                 }
 
-                res.json({
-                    command: result.command,
-                    value: result.value || ''
-                });
+                // Send minimal compact JSON (no whitespace, shorter Content-Type)
+                res.set('Content-Type', 'application/json').send(`{"command":"${result.command}","value":"${result.value || ''}"}`);
             });
         } else {
-            res.status(404).json({ status: 'no_commands' });
+            // Minimal 404 response
+            res.status(404).set('Content-Type', 'application/json').send('{"error":"none"}');
         }
     });
 });
