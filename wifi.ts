@@ -83,54 +83,17 @@ namespace WiFi {
             if (chunk.length > 0) {
                 fullData += chunk
                 noDataCount = 0
-                
-                if (WiFiDebugMode) {
-                    serial.redirectToUSB()
-                    basic.pause(10)
-                    serial.writeString("CHUNK:" + chunk.length + "B\r\n")
-                    basic.pause(10)
-                    serial.redirect(txPin, rxPin, baudRate)
-                }
             } else {
                 noDataCount++
-                if (noDataCount > 20) break  // No data for 1 second (20 x 50ms)
+                if (noDataCount > 20) break  // No data for 1 second
             }
-            basic.pause(50)  // Read more frequently to avoid buffer overflow
-        }
-        
-        if (WiFiDebugMode && fullData.length > 0) {
-            serial.redirectToUSB()
-            basic.pause(10)
-            serial.writeString("TOTAL:" + fullData.length + "B\r\n")
-            // Show first 200 chars of response for debugging
-            if (fullData.length > 200) {
-                serial.writeString("DATA:" + fullData.substr(0, 200) + "...\r\n")
-            } else {
-                serial.writeString("DATA:" + fullData + "\r\n")
-            }
-            basic.pause(20)
-            serial.redirect(txPin, rxPin, baudRate)
+            basic.pause(50)
         }
         
         return fullData
     }
 
-    /**
-     * Parse +IPD data from ESP32 format: +IPD,<link_id>,<length>:<data>
-     */
-    function parseIPDData(response: string): string {
-        // Look for +IPD header: +IPD,1,270:HTTP/1.1...
-        let ipdPos = response.indexOf("+IPD")
-        if (ipdPos < 0) return ""
-        
-        // Find the colon that separates the +IPD header from the actual data
-        let colonPos = response.indexOf(":", ipdPos)
-        if (colonPos < 0 || colonPos >= response.length - 1) return ""
-        
-        // Everything after the colon is the HTTP response
-        // Keep it exactly as-is, including all line breaks that remain
-        return response.substr(colonPos + 1)
-    }
+
 
     /**
      * Extract HTTP status code from response
@@ -156,25 +119,10 @@ namespace WiFi {
      * Extract HTTP body from response (content after headers)
      */
     function parseHttpBody(response: string): string {
-        // Look for Content-Length header first to know body size
-        let contentLengthPos = response.indexOf("Content-Length:")
-        let expectedBodyLen = 0
-        if (contentLengthPos > 0) {
-            // Extract the number after "Content-Length: "
-            let lenStart = contentLengthPos + 15
-            let lenEnd = lenStart
-            while (lenEnd < response.length && response.charAt(lenEnd) >= "0" && response.charAt(lenEnd) <= "9") {
-                lenEnd++
-            }
-            if (lenEnd > lenStart) {
-                expectedBodyLen = parseInt(response.substr(lenStart, lenEnd - lenStart))
-            }
-        }
-        
-        // Try finding JSON body directly first (most reliable for our use case)
+        // Find JSON body directly
         let jsonStart = response.indexOf("{")
         if (jsonStart >= 0) {
-            // Find matching closing brace
+            // Find last closing brace by searching backwards
             let jsonEnd = -1
             for (let i = response.length - 1; i > jsonStart; i--) {
                 if (response.charAt(i) == "}") {
@@ -183,37 +131,9 @@ namespace WiFi {
                 }
             }
             if (jsonEnd > jsonStart) {
-                let body = response.substr(jsonStart, jsonEnd - jsonStart + 1)
-                // Verify it's reasonable JSON length
-                if (expectedBodyLen == 0 || body.length >= expectedBodyLen - 5) {
-                    return body
-                }
+                return response.substr(jsonStart, jsonEnd - jsonStart + 1)
             }
         }
-        
-        // Fallback: try standard HTTP header separators
-        let separators = ["\r\n\r\n", "\n\n", "\r\n\n", "\n\r\n"]
-        
-        for (let i = 0; i < separators.length; i++) {
-            let sep = separators[i]
-            let sepIndex = response.indexOf(sep)
-            if (sepIndex > 0) {
-                let body = response.substr(sepIndex + sep.length)
-                
-                // Trim trailing/leading whitespace
-                while (body.length > 0 && (body.charAt(body.length - 1) == "\r" || body.charAt(body.length - 1) == "\n" || body.charAt(body.length - 1) == " " || body.charAt(body.length - 1) == "\0")) {
-                    body = body.substr(0, body.length - 1)
-                }
-                while (body.length > 0 && (body.charAt(0) == "\r" || body.charAt(0) == "\n" || body.charAt(0) == " ")) {
-                    body = body.substr(1)
-                }
-                
-                if (body.length > 0) {
-                    return body
-                }
-            }
-        }
-        
         return ""
     }
 
@@ -806,28 +726,13 @@ namespace WiFi {
                 serial.writeString(request)
                 basic.pause(100)
                 
-                // Don't wait for SEND OK - immediately start reading response
-                // The server responds right away and we need to capture it
+                // Read response immediately after sending
                 lastTcpData = readChunkedData(5000)
                 
                 if (lastTcpData.length > 0) {
                     tcpDataReceived = true
-                    
-                    // Parse directly from raw TCP data (skip IPD parsing - it's unreliable)
                     lastHttpStatus = parseHttpStatus(lastTcpData)
                     lastHttpBody = parseHttpBody(lastTcpData)
-                    
-                    if (WiFiDebugMode) {
-                        serial.redirectToUSB()
-                        basic.pause(10)
-                        serial.writeString("RAW_LEN:" + lastTcpData.length + "\r\n")
-                        serial.writeString("STAT:" + lastHttpStatus + " BODY_LEN:" + lastHttpBody.length + "\r\n")
-                        if (lastHttpBody.length > 0 && lastHttpBody.length < 100) {
-                            serial.writeString("BODY:" + lastHttpBody + "\r\n")
-                        }
-                        basic.pause(10)
-                        serial.redirect(txPin, rxPin, baudRate)
-                    }
                 }
             }
             
@@ -857,17 +762,12 @@ namespace WiFi {
             sendTCP(request)
             basic.pause(1000)
             
-            // Read response with chunking support
             lastTcpData = readChunkedData(5000)
             
             if (lastTcpData.length > 0) {
                 tcpDataReceived = true
-                // Parse IPD format and extract HTTP content
-                let httpData = parseIPDData(lastTcpData)
-                if (httpData.length > 0) {
-                    lastHttpStatus = parseHttpStatus(httpData)
-                    lastHttpBody = parseHttpBody(httpData)
-                }
+                lastHttpStatus = parseHttpStatus(lastTcpData)
+                lastHttpBody = parseHttpBody(lastTcpData)
             }
             
             closeTCP()

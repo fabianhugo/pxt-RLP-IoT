@@ -17,15 +17,9 @@ const POLL_INTERVAL = 3000  // Check every 3 seconds
 let ledState = false
 let ledColor = "off"
 
-// Command parsing variables (avoid object return types)
+// Command parsing variables
 let lastCommand = ""
 let lastValue = ""
-
-// Debug tracking (view with Button A+B)
-let debugRawLength = 0
-let debugBodyLength = 0
-let debugHttpStatus = 0
-let debugCommandsReceived = 0
 
 // ==================== Initialize WiFi ====================
 basic.showString("Init", 70)
@@ -251,89 +245,22 @@ function sendAck(command: string, value: string, status: string) {
 
 // ==================== Command Polling Loop ====================
 basic.forever(function () {
-    // Show polling indicator
-    led.plot(4, 4)
-    
     // Poll for commands
     WiFi.httpGET(SERVER_HOST, SERVER_PORT, `/api/command/${DEVICE_ID}`)
     basic.pause(1000)
     
-    // Update debug variables
-    debugHttpStatus = WiFi.getLastHttpStatus()
-    
     if (WiFi.isHttpSuccess()) {
-        // Got a command - show indicator
-        led.plot(0, 4)
-        basic.pause(200)
-        
-        // Try getting raw TCP data first
-        let rawData = WiFi.getLastTCPData()
         let body = WiFi.getLastHttpBody()
         
-        // Update debug lengths
-        debugRawLength = rawData.length
-        debugBodyLength = body.length
-        
-        // Debug: show what we got
-        if (rawData.length > 10) {
-            led.plot(1, 4)  // Got raw data
-        }
-        
-        if (body.length > 5) {
-            led.plot(2, 4)  // Got parsed body
-        }
-        
-        // Try parsing the body if we have it
         if (body.length > 0) {
             parseCommand(body)
-        } else if (rawData.length > 0) {
-            // Fallback: try parsing raw data
-            led.plot(3, 4)
-            parseCommand(rawData)
-        }
-        
-        if (lastCommand.length > 0) {
-            // Command found - increment counter
-            debugCommandsReceived++
             
-            // Flash all bottom LEDs
-            led.plot(0, 4)
-            led.plot(1, 4)
-            led.plot(2, 4)
-            led.plot(3, 4)
-            led.plot(4, 4)
-            basic.pause(500)
-            
-            // Execute the command
-            executeCommand(lastCommand, lastValue)
-            
-            // Clear debug LEDs
-            led.unplot(0, 4)
-            led.unplot(1, 4)
-            led.unplot(2, 4)
-            led.unplot(3, 4)
-        } else {
-            // No command found - clear debug LEDs after a moment
-            basic.pause(500)
-            led.unplot(0, 4)
-            led.unplot(1, 4)
-            led.unplot(2, 4)
-            led.unplot(3, 4)
-        }
-    } else if (WiFi.getLastHttpStatus() == 404) {
-        // No commands available - this is normal
-        // Just continue
-    } else {
-        // Error - flash top left 3 times
-        for (let i = 0; i < 3; i++) {
-            led.plot(0, 0)
-            basic.pause(100)
-            led.unplot(0, 0)
-            basic.pause(100)
+            if (lastCommand.length > 0) {
+                // Execute the command
+                executeCommand(lastCommand, lastValue)
+            }
         }
     }
-    
-    led.unplot(4, 4)
     
     // Wait before next poll
     basic.pause(POLL_INTERVAL)
@@ -353,36 +280,6 @@ input.onButtonPressed(Button.A, function () {
         basic.showIcon(IconNames.Yes)
         basic.pause(500)
         basic.clearScreen()
-    }
-})
-
-// Button A+B: Show debug info
-input.onButtonPressed(Button.AB, function () {
-    basic.showString("Stat:" + debugHttpStatus, 100)
-    basic.pause(500)
-    basic.showString("Raw:" + debugRawLength, 100)
-    basic.pause(500)
-    basic.showString("Body:" + debugBodyLength, 100)
-    basic.pause(500)
-    basic.showString("Cmds:" + debugCommandsReceived, 100)
-    basic.pause(500)
-    basic.showString("Cmd:" + lastCommand, 100)
-    basic.pause(500)
-    basic.showString("Val:" + lastValue, 100)
-})
-
-// Button B: Force command check
-input.onButtonPressed(Button.B, function () {
-    basic.showString("Chk", 70)
-    WiFi.httpGET(SERVER_HOST, SERVER_PORT, `/api/command/${DEVICE_ID}`)
-    basic.pause(1000)
-    
-    if (WiFi.isHttpSuccess()) {
-        let body = WiFi.getLastHttpBody()
-        parseCommand(body)
-        if (lastCommand.length > 0) {
-            executeCommand(lastCommand, lastValue)
-        }
     }
 })
 
