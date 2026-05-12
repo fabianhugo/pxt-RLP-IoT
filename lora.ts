@@ -153,6 +153,7 @@ namespace IotLoRaNode {
     //% channel.min=0 channel.max=20
     //% channel.defl=1
     //% weight=50
+    //% advanced=true
     export function DigitalValue(value: boolean, channel: number): void {
         /**
          * Add digital value
@@ -217,6 +218,7 @@ namespace IotLoRaNode {
     //% channel.min=0 channel.max=20
     //% channel.defl=1
     //% weight=60
+    //% advanced=true
     export function BarometerValue(barometerVal: number, channel: number): void {
         /**
          * Add barometer value
@@ -233,6 +235,7 @@ namespace IotLoRaNode {
     //% channel.min=0 channel.max=20
     //% channel.defl=1
     //% weight=65
+    //% advanced=true
     export function PresenceSensor(value: boolean, channel: number): void {
         /**
          * Add presence value
@@ -246,6 +249,7 @@ namespace IotLoRaNode {
     //% channel.min=0 channel.max=20
     //% channel.defl=1
     //% weight=75
+    //% advanced=true
     export function AccelorometerValue(accelValX: number, accelValY: number, accelValZ: number, channel: number): void {
         /**
          * Add accelorometer
@@ -279,6 +283,7 @@ namespace IotLoRaNode {
     //% channel.min=0 channel.max=20
     //% channel.defl=1
     //% weight=70
+    //% advanced=true
     export function GPS(latitude: number, longitude: number, altitude: number, channel: number): void {
         /**
          * Add GPS value
